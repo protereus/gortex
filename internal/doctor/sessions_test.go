@@ -360,17 +360,3 @@ func TestScanAntigravitySessionsClassifiesToolCalls(t *testing.T) {
 		t.Errorf("session row=%+v", got.Sessions)
 	}
 }
-
-func TestAntigravityHome(t *testing.T) {
-	custom := t.TempDir()
-	t.Setenv("ANTIGRAVITY_HOME", custom)
-	if got := AntigravityHome(); got != custom {
-		t.Errorf("AntigravityHome() = %q, want %q", got, custom)
-	}
-
-	t.Setenv("ANTIGRAVITY_HOME", "")
-	home, _ := os.UserHomeDir()
-	if got := AntigravityHome(); got != home {
-		t.Errorf("AntigravityHome() default = %q, want %q", got, home)
-	}
-}

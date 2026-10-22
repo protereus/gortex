@@ -24,19 +24,6 @@ var antigravityNativeReadTools = map[string]bool{
 	"list_dir":          true,
 }
 
-// AntigravityHome resolves the user's home directory for Antigravity session
-// transcript scanning.
-func AntigravityHome() string {
-	if v := strings.TrimSpace(os.Getenv("ANTIGRAVITY_HOME")); v != "" {
-		return v
-	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return ""
-	}
-	return home
-}
-
 func antigravityBrainRoots(home string) []string {
 	if home == "" {
 		return nil

@@ -2,6 +2,7 @@ package antigravity
 
 import (
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/zzet/gortex/internal/agents"
@@ -11,7 +12,21 @@ const (
 	hookPluginName     = "gortex"
 	hookTimeoutSeconds = 10
 	hookAgentFlag      = "antigravity"
+
+	// postToolUseMatcher limits PostToolUse to MCP calls, the only ones
+	// its handler acts on (localization receipts from Gortex navigation
+	// tools), so native tool calls stop spawning a gortex process. agy's
+	// bundled hooks docs define matchers as regexes over tool names
+	// ("run_command|view_file", "browser_.*"). Lazy MCP calls arrive as
+	// call_mcp_tool and eager ones as mcp_gortex_<op>; the leading and
+	// trailing .* match both whether or not agy anchors the regex.
+	postToolUseMatcher = ".*mcp.*|.*gortex.*"
 )
+
+// hookShellIsCmd reports whether agy runs hook commands through `cmd /c`
+// (Windows) rather than `sh -c`, as agy's bundled hooks docs state. A
+// variable so tests can render both forms.
+var hookShellIsCmd = runtime.GOOS == "windows"
 
 // HookEvents are the canonical PascalCase lifecycle events this adapter
 // installs, in the order they matter for adoption and `gortex doctor`.
@@ -36,9 +51,6 @@ func HookConfigPath(home string) string {
 	if home == "" {
 		return ""
 	}
-	if override := antigravityConfigHomeOverride(home); override != "" {
-		return filepath.Join(override, "hooks.json")
-	}
 	return filepath.Join(home, ".gemini", "config", "hooks.json")
 }
 
@@ -60,18 +72,39 @@ func posixQuote(s string) string {
 }
 
 func hookCommandForEvent(env agents.Env, onDiskEvent string) string {
-	bin := posixQuote(strings.ReplaceAll(hookBinary(env), `\`, "/"))
-	base := bin + " hook --agent=" + hookAgentFlag + " --event=" + onDiskEvent
+	args := " hook --agent=" + hookAgentFlag + " --event=" + onDiskEvent
 	switch strings.ToLower(strings.TrimSpace(env.HookMode)) {
 	case "enrich":
-		return base + " --mode=enrich"
+		args += " --mode=enrich"
 	case "consult-unlock":
-		return base + " --mode=consult-unlock"
+		args += " --mode=consult-unlock"
 	case "nudge", "adaptive-nudge":
-		return base + " --mode=nudge"
-	default:
-		return base
+		args += " --mode=nudge"
 	}
+	return hookCommandLine(hookBinary(env), args)
+}
+
+// hookCommandLine joins the binary and its arguments for the shell agy runs
+// hooks through: `sh -c` on Unix, `cmd /c` on Windows.
+//
+// cmd has no single-quote syntax, so a Windows path that needs quoting is
+// double-quoted with its native backslashes kept, behind `call` so the line
+// never starts with a quote. A line that does start with one loses its
+// first and last quote to cmd unless it has exactly two quotes with none of
+// & < > ( ) @ ^ | between them (see `cmd /?`), which breaks
+// "C:\Program Files (x86)\..." under `cmd /c` and any quoted path under
+// `cmd /s /c`. That holds when agy hands cmd the line as written; if it
+// re-escapes the line as one argument, a path that needs quoting fails
+// either way.
+func hookCommandLine(bin, args string) string {
+	if !hookShellIsCmd {
+		return posixQuote(strings.ReplaceAll(bin, `\`, "/")) + args
+	}
+	bin = strings.ReplaceAll(bin, "/", `\`)
+	if bin != "" && !strings.ContainsAny(bin, " \t&|<>^(),;=") {
+		return bin + args
+	}
+	return `call "` + bin + `"` + args
 }
 
 func desiredHandler(env agents.Env, onDiskEvent string) map[string]any {
@@ -84,13 +117,13 @@ func desiredHandler(env agents.Env, onDiskEvent string) map[string]any {
 
 func desiredEventValue(env agents.Env, onDiskEvent string) any {
 	handler := desiredHandler(env, onDiskEvent)
-	if onDiskEvent == "PreToolUse" || onDiskEvent == "PostToolUse" {
-		return []any{
-			map[string]any{
-				"matcher": "*",
-				"hooks":   []any{handler},
-			},
-		}
+	switch onDiskEvent {
+	case "PreToolUse":
+		// Every tool: the policy covers native file and shell tools too.
+		// "*" is agy's match-all value, not a regex.
+		return []any{map[string]any{"matcher": "*", "hooks": []any{handler}}}
+	case "PostToolUse":
+		return []any{map[string]any{"matcher": postToolUseMatcher, "hooks": []any{handler}}}
 	}
 	return []any{handler}
 }

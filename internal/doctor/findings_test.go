@@ -618,6 +618,48 @@ func TestPostToolUseSilenceUnderDenyPostureIsExpected(t *testing.T) {
 	assertNoFindingWith(t, findings, "nothing to say")
 }
 
+// TestPostToolUseNeverRunUnderDenyPostureIsExpected: under the deny posture
+// PostToolUse only watches Gortex tool calls, so when the window's
+// transcripts show none, zero runs beside running siblings is not a broken
+// entry. With no transcripts, or once they show Gortex calls, zero runs may
+// mean the matcher missed them, so the warning stands; enrich keeps it too.
+func TestPostToolUseNeverRunUnderDenyPostureIsExpected(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		agent       string
+		deny        bool
+		sessions    int
+		gortexCalls int
+		want        Severity
+	}{
+		{"deny, transcripts show no Gortex calls", "antigravity", true, 3, 0, SeverityInfo},
+		{"deny, Gortex calls missed", "antigravity", true, 3, 25, SeverityWarn},
+		{"deny, no transcripts to confirm", "antigravity", true, 0, 0, SeverityWarn},
+		{"enrich", "claude-code", false, 3, 0, SeverityWarn},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			agent := codexAgent()
+			agent.Agent = tc.agent
+			agent.RequiresTrust = false
+			agent.PostToolUseDenyPosture = tc.deny
+
+			findings := Diagnose(agent, activity(map[string]hooks.EventActivity{
+				"SessionStart":     {Runs: 4, Emitted: 4, DaemonKnown: 4, DaemonUp: 4},
+				"UserPromptSubmit": {Runs: 9, Emitted: 3, DaemonKnown: 9, DaemonUp: 9},
+				"PreToolUse":       {Runs: 40, Emitted: 3, DaemonKnown: 40, DaemonUp: 40},
+			}), Adoption{FilesFound: tc.sessions, InWindow: tc.sessions, GortexCalls: tc.gortexCalls, ShellCalls: 9}, time.Now())
+
+			got := findingWith(t, findings, "PostToolUse is configured but never ran")
+			if got.Severity != tc.want {
+				t.Errorf("severity=%s want %s", got.Severity, tc.want)
+			}
+			if tc.want == SeverityInfo && got.Remedy != "" {
+				t.Errorf("expected silence needs no remedy, got %q", got.Remedy)
+			}
+		})
+	}
+}
+
 // TestPostToolUseSilenceStillWarnsUnderEnrich is the guard the downgrade
 // must not swallow: under enrich the matcher names the native read-shaped
 // tools, so zero emissions genuinely means the enrichment path broke.

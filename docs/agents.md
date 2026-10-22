@@ -344,8 +344,17 @@ knowledge panel.
 PostToolUse and Stop, each running `gortex hook --agent=antigravity
 --event=<event>`; `--hook-mode` is honoured), the rule block in
 `~/.gemini/config/plugins/gortex/rules/AGENTS.md`, and the curated
-skills under `~/.gemini/config/skills/`. A `"enabled": false` you set on
-the `gortex` hook entry is kept across re-installs.
+skills under `~/.gemini/config/skills/`. PreToolUse matches every tool;
+PostToolUse matches MCP calls only, since it just watches Gortex
+localization results. A `"enabled": false` you set on the `gortex` hook
+entry is kept across re-installs.
+
+Antigravity's MCP config has no working-directory field, so `gortex
+mcp` inherits the directory of the process that starts it. When that is
+`$HOME` or `/` (as seen with the IDE), graph tools answer
+`repo_not_tracked` rather than guess a repo. If you work in one repo,
+start Antigravity with `ANTIGRAVITY_WORKSPACE=/path/to/repo` in its
+environment; the MCP server inherits it.
 
 `gortex init` merges the communities block into `AGENTS.md` (or into an
 existing `GEMINI.md` when the repo has no `AGENTS.md`) and writes the

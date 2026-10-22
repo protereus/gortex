@@ -7,7 +7,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 
 	"github.com/zzet/gortex/internal/agents"
 	"github.com/zzet/gortex/internal/agents/internalutil"
@@ -69,30 +68,9 @@ var lookAntigravityBinary = func() (string, error) {
 	return exec.LookPath("antigravity")
 }
 
-func isRealUserHome(home string) bool {
-	if home == "" {
-		return false
-	}
-	real, err := os.UserHomeDir()
-	if err != nil || real == "" {
-		return false
-	}
-	return filepath.Clean(real) == filepath.Clean(home)
-}
-
-func antigravityConfigHomeOverride(home string) string {
-	if !isRealUserHome(home) {
-		return ""
-	}
-	if v := strings.TrimSpace(os.Getenv("ANTIGRAVITY_CLI_HOME")); v != "" {
-		return v
-	}
-	return strings.TrimSpace(os.Getenv("AGY_HOME"))
-}
-
 // Detect returns true when an Antigravity binary (agy / antigravity) is on PATH,
-// or when an existing config home (~/.gemini/antigravity, ~/.gemini/config,
-// $ANTIGRAVITY_CLI_HOME, $AGY_HOME) or project root (.antigravity) is present.
+// or when an existing config home (~/.gemini/antigravity, ~/.gemini/config) or
+// project root (.antigravity) is present.
 func (a *Adapter) Detect(env agents.Env) (bool, error) {
 	if p, err := lookAntigravityBinary(); err == nil && p != "" {
 		return true, nil
@@ -111,34 +89,15 @@ func (a *Adapter) Detect(env agents.Env) (bool, error) {
 				return true, nil
 			}
 		}
-		if override := antigravityConfigHomeOverride(env.Home); override != "" {
-			if _, err := os.Stat(override); err == nil {
-				return true, nil
-			}
-		}
 	}
 	return false, nil
 }
 
 func mcpConfigPaths(home string) []string {
-	paths := []string{
+	return []string{
 		filepath.Join(home, ".gemini", "antigravity", "mcp_config.json"),
 		filepath.Join(home, ".gemini", "config", "mcp_config.json"),
 	}
-	if override := antigravityConfigHomeOverride(home); override != "" {
-		custom := filepath.Join(override, "mcp_config.json")
-		found := false
-		for _, p := range paths {
-			if p == custom {
-				found = true
-				break
-			}
-		}
-		if !found {
-			paths = append(paths, custom)
-		}
-	}
-	return paths
 }
 
 // GlobalPluginManifestPath returns the plugin.json path that registers

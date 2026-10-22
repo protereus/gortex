@@ -70,13 +70,16 @@ type AgentHooks struct {
 	// instead, making the block above dead text.
 	InstructionsShadowed string
 	// PostToolUseDenyPosture is set when the installed PostToolUse hook runs
-	// under the deny posture — its matcher names only the Gortex MCP tools,
-	// never the native read-shaped tools the enrichment path keys on. There
-	// the hook exists to watch localization receipts and is never expected
-	// to inject context (PreToolUse already redirects native reads), so
-	// "ran but never emitted" is the designed steady state, not a
-	// degradation. Agents without a posture concept leave it false and keep
-	// the original warning semantics.
+	// under the deny posture — it only observes Gortex MCP results, never
+	// the native read-shaped tools the enrichment path keys on (the matcher
+	// is agent-specific: Claude Code names its navigation tools, Antigravity
+	// matches MCP calls). There the hook exists to watch localization
+	// receipts and is never expected to inject context (PreToolUse already
+	// redirects native reads), so "ran but never emitted" is the designed
+	// steady state, not a degradation, and so is "never ran" when the
+	// window's transcripts show no Gortex tool calls. Agents without a
+	// posture concept leave it false and keep the original warning
+	// semantics.
 	PostToolUseDenyPosture bool
 	// HooksDisabled marks a harness whose configuration switches hook
 	// execution off wholesale. It explains an idle install completely, so it
@@ -196,6 +199,17 @@ func Diagnose(agent AgentHooks, summary hooks.EffectivenessSummary, adoption Ado
 			if isSessionEndEvent(agent.Agent, event) {
 				add(SeverityInfo, "",
 					"%s is configured but never ran, while other hooks did%s — it fires only when a session ends cleanly; killed or still-open sessions never reach it.",
+					event, lastSeenSuffix(stats.LastSeen, now))
+				continue
+			}
+			// Under the deny posture PostToolUse only watches Gortex tool
+			// calls, so transcripts showing none of them explain its
+			// silence. Without transcripts, or once they show Gortex calls,
+			// silence may mean the matcher missed them: the warning stands.
+			if event == "PostToolUse" && agent.PostToolUseDenyPosture &&
+				adoption.InWindow > 0 && adoption.GortexCalls == 0 {
+				add(SeverityInfo, "",
+					"%s is configured but never ran, while other hooks did%s — expected: this window's transcripts show no Gortex tool calls, and under the deny posture this hook only watches those.",
 					event, lastSeenSuffix(stats.LastSeen, now))
 				continue
 			}

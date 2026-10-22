@@ -2,8 +2,10 @@ package antigravity
 
 import (
 	"bytes"
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -397,40 +399,6 @@ func TestAntigravityAdapterMetadataAndPlanEmptyHome(t *testing.T) {
 	}
 }
 
-func TestAntigravityCustomEnvOverrides(t *testing.T) {
-	realHome, err := os.UserHomeDir()
-	if err != nil || realHome == "" {
-		t.Skip("no user home dir")
-	}
-
-	custom := t.TempDir()
-	t.Setenv("ANTIGRAVITY_CLI_HOME", custom)
-
-	paths := mcpConfigPaths(realHome)
-	wantCustomMCP := filepath.Join(custom, "mcp_config.json")
-	found := false
-	for _, p := range paths {
-		if p == wantCustomMCP {
-			found = true
-			break
-		}
-	}
-	if !found {
-		t.Errorf("mcpConfigPaths(%q) missing %q: %v", realHome, wantCustomMCP, paths)
-	}
-
-	if hookPath := HookConfigPath(realHome); hookPath != filepath.Join(custom, "hooks.json") {
-		t.Errorf("HookConfigPath(%q) = %q, want %q", realHome, hookPath, filepath.Join(custom, "hooks.json"))
-	}
-
-	// AGY_HOME fallback
-	t.Setenv("ANTIGRAVITY_CLI_HOME", "")
-	t.Setenv("AGY_HOME", custom)
-	if hookPath := HookConfigPath(realHome); hookPath != filepath.Join(custom, "hooks.json") {
-		t.Errorf("HookConfigPath with AGY_HOME = %q, want %q", hookPath, filepath.Join(custom, "hooks.json"))
-	}
-}
-
 func TestAntigravityHooksDisabledInspection(t *testing.T) {
 	rootDisabled := map[string]any{
 		"gortex": map[string]any{
@@ -448,5 +416,78 @@ func TestAntigravityHooksDisabledInspection(t *testing.T) {
 	}
 	if antigravityHooksDisabled(rootEnabled) {
 		t.Error("expected antigravityHooksDisabled=false")
+	}
+}
+
+// agy runs hooks via `sh -c` on Unix and `cmd /c` on Windows; cmd has no
+// single quotes and strips quotes from a line that starts with one.
+func TestAntigravityHookCommandLineQuotesForEachShell(t *testing.T) {
+	prev := hookShellIsCmd
+	t.Cleanup(func() { hookShellIsCmd = prev })
+
+	const args = " hook --agent=antigravity --event=PreToolUse"
+	for _, tc := range []struct {
+		name string
+		cmd  bool
+		bin  string
+		want string
+	}{
+		{"posix plain", false, "/usr/local/bin/gortex", "/usr/local/bin/gortex" + args},
+		{"posix space", false, "/home/First Last/go/bin/gortex", "'/home/First Last/go/bin/gortex'" + args},
+		{"cmd bare", true, "gortex", "gortex" + args},
+		{"cmd plain", true, "C:/Users/me/go/bin/gortex.exe", `C:\Users\me\go\bin\gortex.exe` + args},
+		{"cmd space", true, `C:\Users\First Last\go\bin\gortex.exe`, `call "C:\Users\First Last\go\bin\gortex.exe"` + args},
+		{"cmd parens", true, `C:/Program Files (x86)/gortex/gortex.exe`, `call "C:\Program Files (x86)\gortex\gortex.exe"` + args},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			hookShellIsCmd = tc.cmd
+			got := hookCommandLine(tc.bin, args)
+			if got != tc.want {
+				t.Fatalf("hookCommandLine(%q) = %s, want %s", tc.bin, got, tc.want)
+			}
+			if !isGortexAntigravityCommand(got) {
+				t.Errorf("doctor/uninstall would not recognise %s as a Gortex hook", got)
+			}
+		})
+	}
+}
+
+func TestAntigravityHookMatchers(t *testing.T) {
+	env, _ := agentstest.NewEnv(t)
+	env.Mode = agents.ModeGlobal
+	env.InstallHooks = true
+	if _, err := New().Apply(env, agents.ApplyOpts{ForceDetect: true}); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	data, err := os.ReadFile(HookConfigPath(env.Home))
+	if err != nil {
+		t.Fatalf("read hooks: %v", err)
+	}
+	var root map[string]map[string][]map[string]any
+	if err := json.Unmarshal(data, &root); err != nil {
+		t.Fatalf("parse hooks: %v\n%s", err, data)
+	}
+	if got := root["gortex"]["PreToolUse"][0]["matcher"]; got != "*" {
+		t.Errorf("PreToolUse matcher = %v, want * (the policy covers native tools)", got)
+	}
+	if got := root["gortex"]["PostToolUse"][0]["matcher"]; got != postToolUseMatcher {
+		t.Errorf("PostToolUse matcher = %v, want %q", got, postToolUseMatcher)
+	}
+}
+
+// The PostToolUse matcher must catch every way agy names an MCP call and
+// skip native tools, whether agy anchors the regex or not.
+func TestAntigravityPostToolUseMatcherSelectsMCPCalls(t *testing.T) {
+	substring := regexp.MustCompile(postToolUseMatcher)
+	anchored := regexp.MustCompile("^(?:" + postToolUseMatcher + ")$")
+	for _, name := range []string{"call_mcp_tool", "mcp_gortex_search", "mcp__gortex__explore"} {
+		if !substring.MatchString(name) || !anchored.MatchString(name) {
+			t.Errorf("PostToolUse matcher misses MCP call %q", name)
+		}
+	}
+	for _, name := range []string{"view_file", "read_file", "run_command", "grep_search", "list_dir", "replace_file_content"} {
+		if substring.MatchString(name) || anchored.MatchString(name) {
+			t.Errorf("PostToolUse matcher fires on native tool %q", name)
+		}
 	}
 }
