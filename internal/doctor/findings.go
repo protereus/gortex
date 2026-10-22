@@ -248,6 +248,12 @@ func Diagnose(agent AgentHooks, summary hooks.EffectivenessSummary, adoption Ado
 					event, stats.Runs)
 				continue
 			}
+			if isCorrectionOnlyEvent(agent.Agent, event) {
+				add(SeverityInfo, "",
+					"%s ran %d time(s) and injected context 0 times — expected: on this host it only speaks to correct an answer that cites symbols outside its localization evidence.",
+					event, stats.Runs)
+				continue
+			}
 			add(SeverityWarn, "",
 				"%s ran %d time(s) and injected context 0 times — it fires but has nothing to say.", event, stats.Runs)
 		}
@@ -364,6 +370,26 @@ var sessionEndEvents = map[string][]string{
 // sessions ends.
 func isSessionEndEvent(agent, event string) bool {
 	for _, e := range sessionEndEvents[agent] {
+		if e == event {
+			return true
+		}
+	}
+	return false
+}
+
+// correctionOnlyEvents lists, per agent, the hook events whose only output
+// is a rare correction, so a run that injects nothing is the steady state
+// rather than a hook with nothing to say. Antigravity's Stop has no channel
+// for a post-task briefing: it answers only with the one-shot claim-check
+// "continue" when an answer cites symbols outside its localization evidence.
+var correctionOnlyEvents = map[string][]string{
+	"antigravity": {"Stop"},
+}
+
+// isCorrectionOnlyEvent reports whether event only ever emits a correction
+// on agent's host.
+func isCorrectionOnlyEvent(agent, event string) bool {
+	for _, e := range correctionOnlyEvents[agent] {
 		if e == event {
 			return true
 		}
