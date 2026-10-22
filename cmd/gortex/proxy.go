@@ -13,6 +13,7 @@ import (
 
 	"github.com/zzet/gortex/internal/daemon"
 	gortexmcp "github.com/zzet/gortex/internal/mcp"
+	"github.com/zzet/gortex/internal/modelhint"
 	semver "github.com/zzet/gortex/internal/version"
 )
 
@@ -363,6 +364,11 @@ func resolveLaunchCWD() (string, error) {
 	} {
 		if v := os.Getenv(key); !isAmbiguousLaunchCWD(v) {
 			return v, nil
+		}
+	}
+	if h, ok := modelhint.Read(""); ok && modelhint.NormalizeClient(h.Client) == "antigravity" && !isAmbiguousLaunchCWD(h.CWD) {
+		if info, statErr := os.Stat(h.CWD); statErr == nil && info.IsDir() {
+			return h.CWD, nil
 		}
 	}
 	return cwd, nil
