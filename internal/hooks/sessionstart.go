@@ -415,6 +415,20 @@ func renderCwdCoverage(cwd string, s *daemon.StatusResponse) string {
 			abs, len(contained), summary, len(contained), example)
 	default:
 		if pendingAutomaticCheckout(abs, s.TrackedRepos) {
+			if cov, ok := dirCoverageFn(abs, fileIndexedTimeout); ok && cov.Tracked && cov.View != nil && cov.View.Exact && cov.View.RepoPrefix != "" {
+				repoName := cov.View.RepoPrefix
+				workspace := repoName
+				for _, r := range s.TrackedRepos {
+					if r.Prefix == repoName || r.Name == repoName {
+						if r.Workspace != "" {
+							workspace = r.Workspace
+						}
+						break
+					}
+				}
+				return fmt.Sprintf("**cwd `%s` is tracked** as an automatic worktree overlay of repo `%s` (workspace: `%s`). Enforcement is active.\n",
+					abs, repoName, workspace)
+			}
 			return fmt.Sprintf("⏳ **cwd `%s` is a Git checkout awaiting automatic discovery.** Its Git family is already tracked, but the overlay route is not published yet. Do not run `gortex track`; wait for reconciliation and reconnect. Explicit tracking is only for a user-requested dedicated graph.\n", abs)
 		}
 		return fmt.Sprintf("⚠️  **cwd `%s` is not covered by any tracked repo.** Read/Grep/Glob/Bash will fall through to soft guidance only — graph tools won't be available for this directory.\n\nTo enable enforcement: `gortex track %s`\n",

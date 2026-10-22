@@ -6,6 +6,8 @@ import (
 	"strings"
 
 	"github.com/zzet/gortex/internal/daemon"
+	"github.com/zzet/gortex/internal/indexer"
+	"github.com/zzet/gortex/internal/pathkey"
 )
 
 // sessionScope is the caller identity a briefing builder needs in order to
@@ -198,8 +200,9 @@ func recordSessionWriteTargets(input HookInput) {
 }
 
 // trackedRepoForPath returns the tracked repo containing abs, preferring the
-// longest matching root. Strictly containment-based: a path outside every
-// tracked repo matches nothing.
+// longest matching root. Strictly containment-based first; if lexical
+// containment misses, it checks whether abs is inside a linked Git worktree
+// whose common directory matches one of the tracked repos.
 func trackedRepoForPath(abs string) (daemon.TrackedRepoStatus, bool) {
 	var best daemon.TrackedRepoStatus
 	found := false
@@ -213,7 +216,42 @@ func trackedRepoForPath(abs string) (daemon.TrackedRepoStatus, bool) {
 			}
 		}
 	}
-	return best, found
+	if found {
+		return best, true
+	}
+	return trackedWorktreeFamilyForPath(abs)
+}
+
+func trackedWorktreeFamilyForPath(abs string) (daemon.TrackedRepoStatus, bool) {
+	if abs == "" || !filepath.IsAbs(abs) {
+		return daemon.TrackedRepoStatus{}, false
+	}
+	wtRoot := linkedWorktreeRoot(abs)
+	if wtRoot == "" {
+		return daemon.TrackedRepoStatus{}, false
+	}
+
+	candidate := indexer.ResolveWorktree(wtRoot)
+	if !candidate.IsWorktree || candidate.GitCommonDir == "" {
+		return daemon.TrackedRepoStatus{}, false
+	}
+	candidateCommon := pathkey.CanonicalPath(candidate.GitCommonDir)
+
+	for _, r := range hookTrackedReposFn() {
+		if r.Path == "" {
+			continue
+		}
+		tracked := indexer.ResolveWorktree(r.Path)
+		if tracked.GitCommonDir == "" {
+			continue
+		}
+		if pathkey.EqualPaths(candidateCommon, pathkey.CanonicalPath(tracked.GitCommonDir)) {
+			res := r
+			res.Path = wtRoot
+			return res, true
+		}
+	}
+	return daemon.TrackedRepoStatus{}, false
 }
 
 // hookRepoScope resolves the working tree and graph repo prefix the Stop-time

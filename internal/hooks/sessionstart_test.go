@@ -3,11 +3,13 @@ package hooks
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/zzet/gortex/internal/daemon"
 	"github.com/zzet/gortex/internal/profiles"
@@ -121,6 +123,43 @@ func TestRenderCwdCoverageWaitsForAutomaticFamilyCheckout(t *testing.T) {
 	unrelatedGuidance := renderCwdCoverage(unrelated, status)
 	if !strings.Contains(unrelatedGuidance, "gortex track "+unrelated) {
 		t.Fatalf("truly unrelated directory lost explicit-track guidance:\n%s", unrelatedGuidance)
+	}
+}
+
+func TestRenderCwdCoverageReconciledWorktreeEmitsActiveOrientation(t *testing.T) {
+	main := t.TempDir()
+	sessionGuidanceGit(t, main, "init", "-q", "-b", "main")
+	sessionGuidanceGit(t, main, "config", "user.email", "test@example.com")
+	sessionGuidanceGit(t, main, "config", "user.name", "Test")
+	if err := os.WriteFile(filepath.Join(main, "main.go"), []byte("package main\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	sessionGuidanceGit(t, main, "add", ".")
+	sessionGuidanceGit(t, main, "commit", "-q", "-m", "initial")
+	linked := filepath.Join(t.TempDir(), "linked")
+	sessionGuidanceGit(t, main, "worktree", "add", "-q", "-b", "feature", linked)
+
+	prevCoverage := dirCoverageFn
+	t.Cleanup(func() { dirCoverageFn = prevCoverage })
+	dirCoverageFn = func(path string, timeout time.Duration) (daemon.DirCoverageResult, bool) {
+		return daemon.DirCoverageResult{
+			Tracked: true,
+			View: &daemon.ProbeView{
+				Exact:      true,
+				RepoPrefix: "main",
+			},
+		}, true
+	}
+
+	status := &daemon.StatusResponse{
+		TrackedRepos: []daemon.TrackedRepoStatus{
+			{Name: "main", Prefix: "main", Path: main, Workspace: "default"},
+		},
+	}
+	got := renderCwdCoverage(linked, status)
+	want := fmt.Sprintf("**cwd `%s` is tracked** as an automatic worktree overlay of repo `main` (workspace: `default`). Enforcement is active.\n", linked)
+	if got != want {
+		t.Fatalf("renderCwdCoverage(linked) =\n%q\nwant:\n%q", got, want)
 	}
 }
 

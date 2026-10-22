@@ -2,6 +2,7 @@ package hooks
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"testing"
@@ -410,5 +411,70 @@ func assertNoStateFiles(t *testing.T, dir string) {
 	}
 	if len(entries) != 0 {
 		t.Errorf("expected no state files, found %d", len(entries))
+	}
+}
+
+func TestTrackedRepoForPath_LinkedWorktree(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	main := t.TempDir()
+	sessionGuidanceGit(t, main, "init", "-q", "-b", "main")
+	sessionGuidanceGit(t, main, "config", "user.email", "test@example.com")
+	sessionGuidanceGit(t, main, "config", "user.name", "Test")
+	if err := os.WriteFile(filepath.Join(main, "main.go"), []byte("package main\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	sessionGuidanceGit(t, main, "add", ".")
+	sessionGuidanceGit(t, main, "commit", "-q", "-m", "initial")
+	linked := filepath.Join(t.TempDir(), "linked")
+	sessionGuidanceGit(t, main, "worktree", "add", "-q", "-b", "feature", linked)
+
+	withTrackedRepos(t, daemon.TrackedRepoStatus{
+		Name:      "main",
+		Prefix:    "main",
+		Path:      main,
+		Workspace: "default",
+	})
+
+	// 1. Direct file inside primary checkout matches primary path.
+	got, ok := trackedRepoForPath(filepath.Join(main, "main.go"))
+	if !ok || got.Path != main || got.Prefix != "main" {
+		t.Fatalf("primary file = (%v, %v), want (%s, main, true)", got, ok, main)
+	}
+
+	// 2. Direct directory of primary checkout matches primary path.
+	got, ok = trackedRepoForPath(main)
+	if !ok || got.Path != main {
+		t.Fatalf("primary dir = (%v, %v), want (%s, true)", got, ok, main)
+	}
+
+	// 3. File inside linked worktree matches and resolves to worktree root.
+	wtFile := filepath.Join(linked, "main.go")
+	got, ok = trackedRepoForPath(wtFile)
+	if !ok {
+		t.Fatalf("linked worktree file %q was not recognized as tracked", wtFile)
+	}
+	if got.Path != linked {
+		t.Fatalf("linked worktree file got.Path = %q, want worktree root %q", got.Path, linked)
+	}
+	if got.Prefix != "main" {
+		t.Fatalf("linked worktree file got.Prefix = %q, want 'main'", got.Prefix)
+	}
+
+	// 4. Root directory of linked worktree matches and resolves to worktree root.
+	got, ok = trackedRepoForPath(linked)
+	if !ok {
+		t.Fatalf("linked worktree root %q was not recognized as tracked", linked)
+	}
+	if got.Path != linked {
+		t.Fatalf("linked worktree root got.Path = %q, want %q", got.Path, linked)
+	}
+
+	// 5. Unrelated directory fails open (not tracked).
+	unrelated := t.TempDir()
+	_, ok = trackedRepoForPath(unrelated)
+	if ok {
+		t.Fatalf("unrelated dir %q was unexpectedly recognized as tracked", unrelated)
 	}
 }

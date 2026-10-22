@@ -33,7 +33,14 @@ func linkedWorktreeRoot(abs string) string {
 	if abs == "" || !filepath.IsAbs(abs) {
 		return ""
 	}
-	dir := filepath.Dir(filepath.Clean(abs))
+	dir := filepath.Clean(abs)
+	if info, err := os.Stat(dir); err == nil {
+		if !info.IsDir() {
+			dir = filepath.Dir(dir)
+		}
+	} else {
+		dir = filepath.Dir(dir)
+	}
 	for {
 		info, err := os.Lstat(filepath.Join(dir, ".git"))
 		if err == nil {
