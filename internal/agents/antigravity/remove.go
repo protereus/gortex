@@ -208,7 +208,7 @@ func removePluginManifest(env agents.Env, opts agents.ApplyOpts) (agents.FileAct
 		return agents.FileAction{}, err
 	}
 	internalutil.Logf(env.Stderr, "[gortex uninstall] removed %s", path)
-	pruneEmptyDir(filepath.Dir(path)) // plugins/gortex
+	pruneEmptyDir(filepath.Dir(path))               // plugins/gortex
 	pruneEmptyDir(filepath.Dir(filepath.Dir(path))) // plugins
 	return agents.FileAction{Path: path, Action: agents.ActionDelete}, nil
 }

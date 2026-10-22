@@ -22,6 +22,9 @@ type InstallState struct {
 	InstructionsWired      bool           `json:"instructions_wired"`
 }
 
+// HooksDisabledRemedy is how a user turns Gortex's Antigravity hooks back on.
+const HooksDisabledRemedy = `remove "enabled": false from the "gortex" entry in ~/.gemini/config/hooks.json`
+
 // Inspect reads the Antigravity configuration under home. Every failure
 // degrades to "not configured" rather than an error so `gortex doctor`
 // can report broken or partial setups cleanly.

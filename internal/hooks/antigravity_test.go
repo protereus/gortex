@@ -519,3 +519,128 @@ func TestAntigravityHelperEdgeCases(t *testing.T) {
 		t.Errorf("cwd: %s", inAliases.cwd())
 	}
 }
+
+// A whole-file Gortex read is a nudge on Claude and Kimi, and a deny only
+// under GORTEX_HOOK_FORCE_COMPRESS. PreToolUse has no soft channel, so the
+// default answer is a plain allow rather than a deny.
+func TestHandleAntigravityGortexWholeFileReadDeniesOnlyWhenForced(t *testing.T) {
+	t.Setenv("GORTEX_HOOK_SESSION_DIR", t.TempDir())
+	withDaemonReachable(t, true)
+
+	payload := copilotPayload(t, map[string]any{
+		"conversationId": "conv-gortex-read",
+		"workspacePaths": []string{"/repo"},
+		"toolCall": map[string]any{
+			"name": "call_mcp_tool",
+			"args": map[string]any{
+				"ServerName": "gortex",
+				"ToolName":   "read_file",
+				"Arguments":  map[string]any{"path": "internal/auth/token.go"},
+			},
+		},
+	})
+
+	out, _ := handleAntigravity(payload, 0, ModeDeny, "PreToolUse")
+	if out != `{"decision":"allow"}` {
+		t.Fatalf("whole-file Gortex read should be allowed by default, got %s", out)
+	}
+
+	t.Setenv("GORTEX_HOOK_FORCE_COMPRESS", "1")
+	out, _ = handleAntigravity(payload, 0, ModeDeny, "PreToolUse")
+	var dec antigravityDecisionResponse
+	if err := json.Unmarshal([]byte(out), &dec); err != nil {
+		t.Fatalf("unmarshal decision: %v\n%s", err, out)
+	}
+	if dec.Decision != "deny" || !strings.Contains(dec.Reason, "compress_bodies") {
+		t.Fatalf("expected compress_bodies deny under GORTEX_HOOK_FORCE_COMPRESS, got %+v", dec)
+	}
+}
+
+// In nudge mode a Gortex call is the symbolic move that resets the
+// fallback streak, as it does for Claude and Copilot.
+func TestHandleAntigravityNudgeModeResetsStreakOnGortexCall(t *testing.T) {
+	t.Setenv("GORTEX_HOOK_SESSION_DIR", t.TempDir())
+	withDaemonReachable(t, true)
+	stubIndexedFile(t, true, 9)
+
+	readPayload := copilotPayload(t, map[string]any{
+		"conversationId": "conv-nudge",
+		"workspacePaths": []string{"/repo"},
+		"toolCall": map[string]any{
+			"name": "read_file",
+			"args": map[string]any{"Path": "internal/auth/token.go"},
+		},
+	})
+	gortexPayload := copilotPayload(t, map[string]any{
+		"conversationId": "conv-nudge",
+		"workspacePaths": []string{"/repo"},
+		"toolCall": map[string]any{
+			"name": "call_mcp_tool",
+			"args": map[string]any{
+				"ServerName": "gortex",
+				"ToolName":   "explore",
+				"Arguments":  map[string]any{"task": "check token"},
+			},
+		},
+	})
+	decision := func(payload []byte) string {
+		t.Helper()
+		out, _ := handleAntigravity(payload, 0, ModeAdaptiveNudge, "PreToolUse")
+		var dec antigravityDecisionResponse
+		if err := json.Unmarshal([]byte(out), &dec); err != nil {
+			t.Fatalf("unmarshal decision: %v\n%s", err, out)
+		}
+		return dec.Decision
+	}
+
+	for i := 0; i < nudgeThreshold-1; i++ {
+		if got := decision(readPayload); got != "allow" {
+			t.Fatalf("read %d below the threshold = %q, want allow", i+1, got)
+		}
+	}
+	if got := decision(gortexPayload); got != "allow" {
+		t.Fatalf("Gortex call = %q, want allow", got)
+	}
+	for i := 0; i < nudgeThreshold-1; i++ {
+		if got := decision(readPayload); got != "allow" {
+			t.Fatalf("read %d after the Gortex call = %q, want allow (streak should have reset)", i+1, got)
+		}
+	}
+	if got := decision(readPayload); got != "deny" {
+		t.Fatalf("read at the threshold = %q, want the one-shot nudge deny", got)
+	}
+}
+
+// Before hooks moved to ~/.gemini/config/hooks.json, Gortex wrote
+// `gortex hook --agent antigravity` (no --event) into ~/.gemini/settings.json,
+// which only Gemini CLI reads. Those entries must keep getting Gemini's
+// hookSpecificOutput shape, not agy's injectSteps.
+func TestHandleAntigravityLegacyGeminiSettingsEntryAnswersInGeminiShape(t *testing.T) {
+	withFakeStatus(t, func() (*daemon.StatusResponse, error) {
+		return &daemon.StatusResponse{
+			Version: "1.0.0", Ready: true,
+			TrackedRepos: []daemon.TrackedRepoStatus{{Name: "repo", Path: repoTmpFixtureRoot, Workspace: "repo", Nodes: 10}},
+			Workspaces:   []daemon.WorkspaceSummary{{Slug: "repo"}},
+		}, nil
+	})
+
+	payload := copilotPayload(t, map[string]any{
+		"hook_event_name": "SessionStart",
+		"cwd":             repoTmpFixtureRoot,
+	})
+	out, code := handleAntigravity(payload, 0, ModeDeny, "")
+	if code != 0 {
+		t.Fatalf("exit code = %d", code)
+	}
+	if strings.Contains(out, "injectSteps") {
+		t.Fatalf("legacy Gemini entry answered in agy's shape: %s", out)
+	}
+	var resp HookOutput
+	if err := json.Unmarshal([]byte(out), &resp); err != nil {
+		t.Fatalf("unmarshal legacy response: %v\n%s", err, out)
+	}
+	if resp.HookSpecificOutput == nil || resp.HookSpecificOutput.HookEventName != "SessionStart" ||
+		!strings.Contains(resp.HookSpecificOutput.AdditionalContext, "Gortex Session Orientation") {
+		t.Fatalf("expected Gemini hookSpecificOutput SessionStart orientation, got %s", out)
+	}
+}

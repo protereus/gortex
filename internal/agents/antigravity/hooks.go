@@ -98,7 +98,7 @@ func desiredEventValue(env agents.Env, onDiskEvent string) any {
 // upsertAntigravityHooks merges the "gortex" hook spec into root
 // (~/.gemini/config/hooks.json). Unrelated top-level hook specs are
 // preserved untouched, and an existing `"enabled": false` kill-switch
-// inside the "gortex" spec is respected unless opts.Force is set.
+// inside the "gortex" spec is left in place, even under opts.Force.
 func upsertAntigravityHooks(root map[string]any, env agents.Env, opts agents.ApplyOpts) bool {
 	changed := false
 	spec, ok := root[hookPluginName].(map[string]any)

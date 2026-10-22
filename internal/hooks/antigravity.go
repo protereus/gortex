@@ -221,6 +221,14 @@ func handleAntigravity(data []byte, port int, mode Mode, eventFlag string) (stri
 		return "{}", 0
 	}
 
+	// No --event plus Gemini's snake_case hook_event_name: a legacy
+	// `gortex hook --agent antigravity` entry in ~/.gemini/settings.json,
+	// written before the hooks moved to ~/.gemini/config/hooks.json. Only
+	// Gemini CLI reads that file, so answer in its wire shape.
+	if strings.TrimSpace(eventFlag) == "" && in.HookEventNameSnake != "" {
+		return externalAgentResponse(data), 0
+	}
+
 	rawEvent := firstNonEmpty(eventFlag, in.HookEventName, in.HookEventNameSnake, in.EventName)
 	event := normalizeAntigravityEvent(rawEvent, in)
 	if event == "AfterTool" {
@@ -408,23 +416,17 @@ func antigravityPreToolUse(in antigravityInput, cwd string, port int, mode Mode)
 	daemonUp := daemonReachableFn()
 	out := allowOut
 	emitted := false
+	// Same pipeline as Claude and Copilot: Gortex tools go through applyMode
+	// too, so nudge mode resets its streak on them, and the compress-bodies
+	// read advisory only denies under GORTEX_HOOK_FORCE_COMPRESS. PreToolUse
+	// has no soft-context channel, so advisory context is dropped.
 	if daemonUp {
-		if isGortexTool && codexMCPReadPreToolUseTool(rawTool) {
-			if ctx := gortexReadNudge(rawTool, input.ToolInput); ctx != "" && mode == ModeDeny {
-				emitted = true
-				out = marshalAntigravity(antigravityDecisionResponse{
-					Decision: "deny",
-					Reason:   ctx,
-				})
-			}
-		} else if !isGortexTool {
-			if result := applyMode(input, false, mode, enrich(input, port)); result.deny {
-				emitted = true
-				out = marshalAntigravity(antigravityDecisionResponse{
-					Decision: "deny",
-					Reason:   result.reason,
-				})
-			}
+		if result := applyMode(input, isGortexTool, mode, enrich(input, port)); result.deny {
+			emitted = true
+			out = marshalAntigravity(antigravityDecisionResponse{
+				Decision: "deny",
+				Reason:   result.reason,
+			})
 		}
 	}
 

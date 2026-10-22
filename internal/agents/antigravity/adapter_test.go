@@ -313,7 +313,7 @@ func TestAntigravityHookModes(t *testing.T) {
 	}
 }
 
-func TestAntigravityCommunitiesRoutingPathPrefersGeminiMD(t *testing.T) {
+func TestAntigravityCommunitiesRoutingPathFallsBackToGeminiMD(t *testing.T) {
 	root := t.TempDir()
 	home := t.TempDir()
 	env := agents.Env{Root: root, Home: home, Mode: agents.ModeProject, SkillsRouting: "- test routing"}
@@ -324,7 +324,7 @@ func TestAntigravityCommunitiesRoutingPathPrefersGeminiMD(t *testing.T) {
 		t.Errorf("expected AGENTS.md, got %s", p)
 	}
 
-	// 2. With GEMINI.md, returns GEMINI.md.
+	// 2. With only GEMINI.md, returns GEMINI.md.
 	geminiMD := filepath.Join(root, "GEMINI.md")
 	if err := os.WriteFile(geminiMD, []byte("# Gemini\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -364,6 +364,15 @@ func TestAntigravityCommunitiesRoutingPathPrefersGeminiMD(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(root, "AGENTS.md")); err == nil {
 		t.Errorf("AGENTS.md was created when GEMINI.md was present")
+	}
+
+	// 5. GEMINI.md is only the fallback: once AGENTS.md exists it wins.
+	agentsMD := filepath.Join(root, "AGENTS.md")
+	if err := os.WriteFile(agentsMD, []byte("# Agents\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if p := a.CommunitiesRoutingPath(env); p != agentsMD {
+		t.Errorf("expected AGENTS.md when both files exist, got %s", p)
 	}
 }
 

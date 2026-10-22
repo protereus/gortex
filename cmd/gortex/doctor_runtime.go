@@ -253,8 +253,9 @@ func doctorAgentProbes(home string) []agentProbe {
 					HooksDisabled:    state.HooksDisabled,
 					InstructionsPath: state.InstructionsPath, InstructionsWired: state.InstructionsWired,
 				},
-				postToolUseDeny: state.PostToolUseDenyPosture,
-				adoption:        doctor.ScanAntigravitySessions(home, since, 10),
+				postToolUseDeny:     state.PostToolUseDenyPosture,
+				hooksDisabledRemedy: antigravity.HooksDisabledRemedy,
+				adoption:            doctor.ScanAntigravitySessions(home, since, 10),
 			}, activity, now)
 		}},
 	}

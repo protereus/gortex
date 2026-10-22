@@ -47,14 +47,19 @@ func (a *Adapter) WritesCommunitiesRouting() bool { return true }
 // communities block in project mode. Antigravity walks up from CWD to
 // the repo root loading AGENTS.md (and GEMINI.md fallback); targeting
 // AGENTS.md converges with Claude Code, Codex, and OpenCode on a single block.
+// An existing GEMINI.md is used only when AGENTS.md is absent, matching the
+// fallback order — a block in GEMINI.md beside an AGENTS.md would go unread.
 func (a *Adapter) CommunitiesRoutingPath(env agents.Env) string {
+	agentsPath := filepath.Join(env.Root, "AGENTS.md")
 	if env.Root != "" {
-		geminiPath := filepath.Join(env.Root, "GEMINI.md")
-		if _, err := os.Stat(geminiPath); err == nil {
-			return geminiPath
+		if _, err := os.Stat(agentsPath); err != nil {
+			geminiPath := filepath.Join(env.Root, "GEMINI.md")
+			if _, err := os.Stat(geminiPath); err == nil {
+				return geminiPath
+			}
 		}
 	}
-	return filepath.Join(env.Root, "AGENTS.md")
+	return agentsPath
 }
 
 var lookAntigravityBinary = func() (string, error) {
